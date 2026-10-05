@@ -1,9 +1,21 @@
 name: Build
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build mod jar
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -23,3 +35,23 @@ jobs:
 
       - name: Build with Gradle
         run: ./gradlew build
+
+      - name: Locate mod jar
+        id: jar
+        run: |
+          JAR="$(ls build/libs/*.jar 2>/dev/null | grep -v -- '-sources\|-javadoc' | head -1)"
+          if [ -z "$JAR" ]; then
+            echo "::error::No mod jar produced in build/libs"
+            ls -l build/libs || true
+            exit 1
+          fi
+          echo "path=$JAR" >> "$GITHUB_OUTPUT"
+          echo "Found $JAR"
+
+      - name: Upload mod jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: infiniteheight-${{ github.sha }}
+          path: ${{ steps.jar.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
