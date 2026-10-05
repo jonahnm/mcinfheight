@@ -4,25 +4,41 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
+
+import net.minecraft.core.Registry;
 import net.minecraft.core.SectionPos;
-import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.chunk.PalettedContainerFactory;
 
 public final class SparseColumns {
     private final Int2ObjectMap<LevelChunkSection> sections = new Int2ObjectOpenHashMap<>();
     private final IntSet generatedTiles = new IntOpenHashSet();
-    private PalettedContainerFactory factory;
+    private Registry<Biome> biomes;
 
-    public void setFactory(PalettedContainerFactory factory) {
-        if (factory != null) {
-            this.factory = factory;
+    public void setBiomes(Registry<Biome> biomes) {
+        if (biomes != null) {
+            this.biomes = biomes;
         }
     }
 
-    public PalettedContainerFactory factory() {
-        return this.factory;
+    public boolean factoryPresent() {
+        return this.biomes != null;
+    }
+
+    public LevelChunkSection firstExisting() {
+        for (LevelChunkSection section : this.sections.values()) {
+            return section;
+        }
+        return null;
+    }
+
+    public void merge(SparseColumns other) {
+        if (other.biomes != null) {
+            this.biomes = other.biomes;
+        }
+        this.generatedTiles.addAll(other.generatedTiles);
+        this.sections.putAll(other.sections);
     }
 
     public LevelChunkSection get(int sectionY) {
@@ -46,6 +62,10 @@ public final class SparseColumns {
         return this.sections;
     }
 
+    public IntSet generatedTiles() {
+        return this.generatedTiles;
+    }
+
     public boolean hasTile(int tileOrigin) {
         return this.generatedTiles.contains(tileOrigin);
     }
@@ -54,39 +74,22 @@ public final class SparseColumns {
         this.generatedTiles.add(tileOrigin);
     }
 
-    public void copyFrom(SparseColumns other) {
-        if (other.factory != null) {
-            this.factory = other.factory;
-        }
-        this.generatedTiles.addAll(other.generatedTiles);
-        this.sections.putAll(other.sections);
-    }
-
-    public IntSet generatedTiles() {
-        return this.generatedTiles;
-    }
-
-    public LevelChunkSection sectionForIndex(ChunkAccess chunk, int index) {
-        return getOrCreate(chunk.getSectionYFromSectionIndex(index));
-    }
-
     public static SparseColumns of(ChunkAccess chunk) {
         SparseColumns columns = ((SparseColumnHolder) chunk).infiniteheight$columns();
-        Level level = chunk.getLevel();
-        if (level != null) {
-            columns.setFactory(level.palettedContainerFactory());
+        if (chunk.getLevel() != null) {
+            columns.setBiomes(chunk.getLevel().registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME));
         }
         return columns;
     }
 
-    public static int sectionY(ChunkAccess chunk, int blockY) {
-        return SectionPos.blockToSectionCoord(blockY);
+    private LevelChunkSection createSection() {
+        if (this.biomes == null) {
+            throw new IllegalStateException("Biome registry is missing; cannot create chunk section");
+        }
+        return new LevelChunkSection(this.biomes);
     }
 
-    private LevelChunkSection createSection() {
-        if (this.factory != null) {
-            return new LevelChunkSection(this.factory);
-        }
-        throw new IllegalStateException("Chunk section factory is missing");
+    public static int sectionYOf(int blockY) {
+        return SectionPos.blockToSectionCoord(blockY);
     }
 }

@@ -13,9 +13,4 @@ public interface LevelHeightAccessorMixin {
     default void infiniteheight$neverOutside(int blockY, CallbackInfoReturnable<Boolean> cir) {
         cir.setReturnValue(false);
     }
-
-    @Inject(method = "isInsideBuildHeight(I)Z", at = @At("HEAD"), cancellable = true)
-    default void infiniteheight$alwaysInside(int blockY, CallbackInfoReturnable<Boolean> cir) {
-        cir.setReturnValue(true);
-    }
 }

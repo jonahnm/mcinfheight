@@ -13,13 +13,15 @@ import it.unimi.dsi.fastutil.shorts.ShortArrayList;
 import it.unimi.dsi.fastutil.shorts.ShortList;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeResolver;
+import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.chunk.PalettedContainerFactory;
 import net.minecraft.world.level.chunk.UpgradeData;
 import net.minecraft.world.level.levelgen.blending.BlendingData;
 
@@ -32,6 +34,10 @@ public abstract class ChunkAccessMixin implements SparseColumnHolder {
     @Shadow
     @Final
     protected LevelChunkSection[] sections;
+
+    @Shadow
+    @Final
+    protected LevelHeightAccessor levelHeightAccessor;
 
     @Unique
     private final SparseColumns infiniteheight$columns = new SparseColumns();
@@ -55,7 +61,7 @@ public abstract class ChunkAccessMixin implements SparseColumnHolder {
 
     @Unique
     private int infiniteheight$sectionY(int sectionIndex) {
-        return ((LevelHeightAccessor) this).getSectionYFromSectionIndex(sectionIndex);
+        return sectionIndex + this.levelHeightAccessor.getMinSection();
     }
 
     @Inject(method = "<init>", at = @At("RETURN"))
@@ -63,16 +69,16 @@ public abstract class ChunkAccessMixin implements SparseColumnHolder {
         ChunkPos chunkPos,
         UpgradeData upgradeData,
         LevelHeightAccessor levelHeightAccessor,
-        PalettedContainerFactory containerFactory,
+        Registry<Biome> biomes,
         long inhabitedTime,
         LevelChunkSection[] sections,
         BlendingData blendingData,
         CallbackInfo ci
     ) {
-        this.infiniteheight$columns.setFactory(containerFactory);
+        this.infiniteheight$columns.setBiomes(biomes);
         ChunkAccess self = (ChunkAccess) (Object) this;
         if (self.getLevel() != null) {
-            this.infiniteheight$columns.setFactory(self.getLevel().palettedContainerFactory());
+            this.infiniteheight$columns.setBiomes(self.getLevel().registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME));
         }
         if (this.sections != null) {
             for (int i = 0; i < this.sections.length; i++) {
@@ -87,18 +93,25 @@ public abstract class ChunkAccessMixin implements SparseColumnHolder {
     private void infiniteheight$sparseSection(int sectionIndex, CallbackInfoReturnable<LevelChunkSection> cir) {
         int sectionY = this.infiniteheight$sectionY(sectionIndex);
         LevelChunkSection section = this.infiniteheight$columns.get(sectionY);
-        if (this.sections != null && sectionIndex >= 0 && sectionIndex < this.sections.length && this.sections[sectionIndex] != null) {
-            if (section == null || (section.hasOnlyAir() && !this.sections[sectionIndex].hasOnlyAir())) {
+        if (section == null) {
+            if (this.sections != null && sectionIndex >= 0 && sectionIndex < this.sections.length && this.sections[sectionIndex] != null) {
                 section = this.sections[sectionIndex];
-                this.infiniteheight$columns.put(sectionY, section);
+            } else if (this.infiniteheight$columns.factoryPresent()) {
+                section = this.infiniteheight$columns.getOrCreate(sectionY);
             }
         }
         if (section == null) {
-            section = this.infiniteheight$columns.getOrCreate(sectionY);
+            // No biome registry available yet: fall back to the first existing section if we can.
+            section = this.infiniteheight$columns.firstExisting();
+        }
+        if (section == null) {
+            cir.setReturnValue(null);
+            return;
         }
         if (this.sections != null && sectionIndex >= 0 && sectionIndex < this.sections.length) {
             this.sections[sectionIndex] = section;
         }
+        this.infiniteheight$columns.put(sectionY, section);
         cir.setReturnValue(section);
     }
 
@@ -117,50 +130,57 @@ public abstract class ChunkAccessMixin implements SparseColumnHolder {
 
     @Inject(method = "getHighestFilledSectionIndex", at = @At("HEAD"), cancellable = true)
     private void infiniteheight$highestFilled(CallbackInfoReturnable<Integer> cir) {
-        int highest = Integer.MIN_VALUE;
-        LevelHeightAccessor height = (LevelHeightAccessor) this;
+        int highestSectionY = Integer.MIN_VALUE;
         for (var entry : this.infiniteheight$columns.all().int2ObjectEntrySet()) {
             if (!entry.getValue().hasOnlyAir()) {
-                int index = height.getSectionIndexFromSectionY(entry.getIntKey());
-                if (this.sections == null || (index >= 0 && index < this.sections.length)) {
-                    highest = Math.max(highest, index);
-                }
+                highestSectionY = Math.max(highestSectionY, entry.getIntKey());
             }
         }
-        cir.setReturnValue(highest == Integer.MIN_VALUE ? -1 : highest);
+        if (highestSectionY == Integer.MIN_VALUE) {
+            cir.setReturnValue(-1);
+            return;
+        }
+        cir.setReturnValue(highestSectionY - this.levelHeightAccessor.getMinSection());
     }
 
     @Inject(method = "getNoiseBiome", at = @At("HEAD"), cancellable = true)
     private void infiniteheight$sparseBiome(int quartX, int quartY, int quartZ, CallbackInfoReturnable<Holder<Biome>> cir) {
         int sectionY = QuartPos.toSection(quartY);
-        LevelChunkSection section = this.infiniteheight$columns.getOrCreate(sectionY);
+        LevelChunkSection section = this.infiniteheight$columns.get(sectionY);
+        if (section == null && this.infiniteheight$columns.factoryPresent()) {
+            section = this.infiniteheight$columns.getOrCreate(sectionY);
+            this.infiniteheight$columns.put(sectionY, section);
+        }
+        if (section == null) {
+            cir.setReturnValue(this.infiniteheight$anyBiome());
+            return;
+        }
         cir.setReturnValue(section.getNoiseBiome(quartX & 3, quartY & 3, quartZ & 3));
     }
 
     @Inject(method = "fillBiomesFromNoise", at = @At("HEAD"), cancellable = true)
-    private void infiniteheight$fillWindowBiomes(BiomeResolver biomeResolver, CallbackInfo ci) {
+    private void infiniteheight$fillAllBiomes(BiomeResolver resolver, Climate.Sampler sampler, CallbackInfo ci) {
         ChunkAccess self = (ChunkAccess) (Object) this;
         ChunkPos pos = self.getPos();
         int quartMinX = QuartPos.fromBlock(pos.getMinBlockX());
         int quartMinZ = QuartPos.fromBlock(pos.getMinBlockZ());
-        net.minecraft.world.level.levelgen.NoiseSettings tile = InfiniteHeight.activeTile();
-        int minSectionY = self.getHeightAccessorForGeneration().getMinSectionY();
-        int maxSectionY = self.getHeightAccessorForGeneration().getMaxSectionY();
-        if (tile != null) {
-            minSectionY = net.minecraft.core.SectionPos.blockToSectionCoord(tile.minY());
-            maxSectionY = net.minecraft.core.SectionPos.blockToSectionCoord(tile.minY() + tile.height() - 1);
-        }
-        for (int sectionY = minSectionY; sectionY <= maxSectionY; sectionY++) {
-            LevelChunkSection section = this.infiniteheight$columns.getOrCreate(sectionY);
-            section.fillBiomesFromNoise(biomeResolver, quartMinX, QuartPos.fromSection(sectionY), quartMinZ);
-        }
-        ci.cancel();
-    }
-
-    @Inject(method = "collectBiomesInPalette", at = @At("HEAD"), cancellable = true)
-    private void infiniteheight$collectSparseBiomes(java.util.Set<Holder<Biome>> output, CallbackInfo ci) {
-        for (LevelChunkSection section : this.infiniteheight$columns.all().values()) {
-            section.getBiomes().forEachInPalette(output::add);
+        int minQuartY = QuartPos.fromBlock(InfiniteHeight.DEEP_FLOOR);
+        int maxQuartY = QuartPos.fromBlock(InfiniteHeight.CEILING);
+        int quartMin = QuartPos.fromBlock(this.levelHeightAccessor.getMinBuildHeight());
+        int quartMax = QuartPos.fromBlock(this.levelHeightAccessor.getMaxBuildHeight());
+        int span = Math.max(1, quartMax - quartMin);
+        for (int quartY = minQuartY; quartY <= maxQuartY; quartY++) {
+            int sectionY = QuartPos.toSection(quartY);
+            LevelChunkSection section = this.infiniteheight$columns.get(sectionY);
+            if (section == null) {
+                if (!this.infiniteheight$columns.factoryPresent()) {
+                    continue;
+                }
+                section = this.infiniteheight$columns.getOrCreate(sectionY);
+                this.infiniteheight$columns.put(sectionY, section);
+            }
+            int wrapped = quartMin + Math.floorMod(quartY - quartMin, span);
+            section.fillBiomesFromNoise(resolver, sampler, quartMinX, wrapped, quartMinZ);
         }
         ci.cancel();
     }
@@ -177,5 +197,13 @@ public abstract class ChunkAccessMixin implements SparseColumnHolder {
             list[sectionIndex] = result;
         }
         cir.setReturnValue(result);
+    }
+
+    @Unique
+    private Holder<Biome> infiniteheight$anyBiome() {
+        for (LevelChunkSection section : this.infiniteheight$columns.all().values()) {
+            return section.getNoiseBiome(0, 0, 0);
+        }
+        return null;
     }
 }

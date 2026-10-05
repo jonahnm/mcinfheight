@@ -9,7 +9,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -31,26 +30,55 @@ public abstract class LevelChunkMixin {
         if (this.level.isDebug()) {
             return;
         }
-        int y = pos.getY();
         LevelChunk self = (LevelChunk) (Object) this;
-        LevelChunkSection section = self.getSection(self.getSectionIndex(y));
-        cir.setReturnValue(section.hasOnlyAir() ? Blocks.AIR.defaultBlockState() : section.getBlockState(pos.getX() & 15, y & 15, pos.getZ() & 15));
+        int sectionIndex = self.getSectionIndex(pos.getY());
+        LevelChunkSection section;
+        if (sectionIndex >= 0 && sectionIndex < self.getSections().length) {
+            section = self.getSections()[sectionIndex];
+        } else {
+            section = ((SparseColumnHolder) this).infiniteheight$columns().get(net.minecraft.core.SectionPos.blockToSectionCoord(pos.getY()));
+        }
+        if (section == null || section.hasOnlyAir()) {
+            cir.setReturnValue(Blocks.AIR.defaultBlockState());
+            return;
+        }
+        cir.setReturnValue(section.getBlockState(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15));
     }
 
     @Inject(method = "getFluidState(III)Lnet/minecraft/world/level/material/FluidState;", at = @At("HEAD"), cancellable = true)
     private void infiniteheight$sparseGetFluid(int x, int y, int z, CallbackInfoReturnable<FluidState> cir) {
         LevelChunk self = (LevelChunk) (Object) this;
-        LevelChunkSection section = self.getSection(self.getSectionIndex(y));
-        cir.setReturnValue(section.hasOnlyAir() ? Fluids.EMPTY.defaultFluidState() : section.getFluidState(x & 15, y & 15, z & 15));
+        int sectionIndex = self.getSectionIndex(y);
+        LevelChunkSection section;
+        if (sectionIndex >= 0 && sectionIndex < self.getSections().length) {
+            section = self.getSections()[sectionIndex];
+        } else {
+            section = ((SparseColumnHolder) this).infiniteheight$columns().get(net.minecraft.core.SectionPos.blockToSectionCoord(y));
+        }
+        if (section == null || section.hasOnlyAir()) {
+            cir.setReturnValue(Fluids.EMPTY.defaultFluidState());
+            return;
+        }
+        cir.setReturnValue(section.getFluidState(x & 15, y & 15, z & 15));
     }
 
     @Inject(method = "<init>(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/level/chunk/ProtoChunk;Lnet/minecraft/world/level/chunk/LevelChunk$PostLoadProcessor;)V", at = @At("RETURN"))
-    private void infiniteheight$copyProtoColumns(net.minecraft.server.level.ServerLevel level, net.minecraft.world.level.chunk.ProtoChunk protoChunk, LevelChunk.PostLoadProcessor postLoad, CallbackInfo ci) {
-        ((SparseColumnHolder) this).infiniteheight$columns().copyFrom(((SparseColumnHolder) protoChunk).infiniteheight$columns());
+    private void infiniteheight$copyProtoColumns(
+        net.minecraft.server.level.ServerLevel level,
+        net.minecraft.world.level.chunk.ProtoChunk protoChunk,
+        LevelChunk.PostLoadProcessor postLoad,
+        CallbackInfo ci
+    ) {
+        ((SparseColumnHolder) this).infiniteheight$columns().merge(((SparseColumnHolder) protoChunk).infiniteheight$columns());
     }
 
     @Inject(method = "replaceWithPacketData", at = @At("RETURN"))
-    private void infiniteheight$importPacketSections(int chunkX, int chunkZ, ClientboundLevelChunkPacketData chunkData, CallbackInfo ci) {
+    private void infiniteheight$importPacketSections(
+        net.minecraft.network.FriendlyByteBuf buffer,
+        net.minecraft.nbt.CompoundTag tag,
+        java.util.function.Consumer<net.minecraft.network.protocol.game.ClientboundLevelChunkPacketData.BlockEntityTagOutput> output,
+        CallbackInfo ci
+    ) {
         ((SparseColumnHolder) this).infiniteheight$importNativeSections();
     }
 }
