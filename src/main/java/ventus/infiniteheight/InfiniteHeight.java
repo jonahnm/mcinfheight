@@ -41,6 +41,9 @@ public class InfiniteHeight {
     /** Number of chunk sections the client render window covers vertically. */
     public static final int RENDER_SECTION_WINDOW = 33;
 
+    /** Only read, never mutated, so a single instance is safe to share across packets. */
+    private static final java.util.BitSet NO_LIGHT_UPDATES = new java.util.BitSet();
+
     public InfiniteHeight(IEventBus modEventBus) {
         modEventBus.addListener(this::commonSetup);
         NeoForge.EVENT_BUS.addListener(this::onLevelTick);
@@ -83,8 +86,10 @@ public class InfiniteHeight {
     }
 
     private void onLevelTick(LevelTickEvent.Post event) {
-        if (event.getLevel() instanceof ServerLevel level && !level.players().isEmpty()) {
-            ensureAround(level, level.players().get(0));
+        if (event.getLevel() instanceof ServerLevel level) {
+            for (ServerPlayer player : level.players()) {
+                ensureAround(level, player);
+            }
         }
     }
 
@@ -99,13 +104,17 @@ public class InfiniteHeight {
         }
         NoiseSettings vanilla = filler.infiniteheight$vanillaTile();
         if (vanilla.height() <= 0 || player.getBlockY() >= vanilla.minY()) {
+            // Common case: above the vanilla column, nothing to do and no chunk lookup.
             return;
         }
-        LevelChunk chunk = level.getChunk(
+        LevelChunk chunk = level.getChunkSource().getChunk(
             SectionPos.blockToSectionCoord(player.getBlockX()),
-            SectionPos.blockToSectionCoord(player.getBlockZ())
+            SectionPos.blockToSectionCoord(player.getBlockZ()),
+            false
         );
-        if (chunk == null) {
+        if (chunk == null || chunk.getMinBuildHeight() >= vanilla.minY()) {
+            // Dimension does not extend below the vanilla column (e.g. the Nether), so a deep tile
+            // would fall outside the chunk's sections and never reach the client.
             return;
         }
         SparseColumns columns = SparseColumns.of(chunk);
@@ -120,8 +129,16 @@ public class InfiniteHeight {
             filled = true;
         }
         if (filled) {
-            ClientboundLevelChunkWithLightPacket packet =
-                new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null);
+            // Empty masks, not null: null would make the packet re-serialise light for every one
+            // of the dimension's light sections (258 for a 4096-tall world, most of it sky light
+            // for empty air above the surface). The column's existing light is already correct on
+            // the client, and the new deep sections are unlit by design like any other cave.
+            ClientboundLevelChunkWithLightPacket packet = new ClientboundLevelChunkWithLightPacket(
+                chunk,
+                level.getLightEngine(),
+                NO_LIGHT_UPDATES,
+                NO_LIGHT_UPDATES
+            );
             for (ServerPlayer watcher : level.getChunkSource().chunkMap.getPlayers(chunk.getPos(), false)) {
                 watcher.connection.send(packet);
             }
