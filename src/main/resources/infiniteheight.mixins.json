@@ -10,7 +10,8 @@
     "LevelChunkMixin",
     "LevelChunkSectionMixin",
     "LevelHeightAccessorMixin",
-    "LivingEntityMixin"
+    "LivingEntityMixin",
+    "NoiseBasedChunkGeneratorMixin"
   ],
   "client": [
     "ViewAreaMixin"
