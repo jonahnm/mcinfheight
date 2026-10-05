@@ -1,0 +1,29 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "ventus.infiniteheight.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "AquiferMixin",
+    "BlockPosMixin",
+    "ChunkAccessMixin",
+    "ChunkGeneratorMixin",
+    "EntityMixin",
+    "HeightRangePlacementMixin",
+    "LevelChunkMixin",
+    "LivingEntityMixin",
+    "LevelChunkSectionMixin",
+    "LevelHeightAccessorMixin",
+    "NoiseBasedChunkGeneratorMixin",
+    "ProtoChunkMixin",
+    "SerializableChunkDataMixin",
+    "WorldBorderMixin",
+    "WorldGenerationContextMixin"
+  ],
+  "client": [
+    "RotatingSectionStorageMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,25 +1,63 @@
+# Infinite Height
 
-Installation information
-=======
+NeoForge 26.3 mod that makes vertical Minecraft effectively unbounded.
 
-This template repository can be directly cloned to get you started with a new
-mod. Simply create a new repository cloned from this one, by following the
-instructions provided by [GitHub](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+Vanilla's 12-bit packed Y and fixed per-chunk section arrays are replaced with:
 
-Once you have your clone, simply open the repository in the IDE of your choice. The usual recommendation for an IDE is either IntelliJ IDEA or Eclipse.
+- widened 20-bit packed Y (`-524272` to `524271`), using vanilla's own packing layout
+- sparse per-column section maps, so chunks only store sections that exist
+- a sliding render window that follows the camera vertically
+- vanilla Overworld / Nether / End terrain, continued as you climb or dig
 
-If at any point you are missing libraries in your IDE, or you've run into problems you can
-run `gradlew --refresh-dependencies` to refresh the local cache. `gradlew clean` to reset everything 
-{this does not affect your code} and then start the process again.
+Below `-64` generation continues as deepslate with caves, ores and biomes, down to `-2048`,
+with no bedrock and no void damage. Generation above and below the vanilla column is
+stretched on demand as you move, so chunks stay cheap.
 
-Mapping Names:
-============
-By default, the MDK is configured to use the official mapping names from Mojang for methods and fields 
-in the Minecraft codebase. These names are covered by a specific license. All modders should be aware of this
-license. For the latest license text, refer to the mapping file itself, or the reference copy here:
-https://github.com/NeoForged/NeoForm/blob/main/Mojang.md
+True mathematical infinity is impossible on a finite machine. This is the real
+unlimited-column approach: you can keep going and the world keeps generating.
 
-Additional Resources: 
-==========
-Community Documentation: https://docs.neoforged.net/  
-NeoForged Discord: https://discord.neoforged.net/
+## Requirements
+
+- Minecraft 26.3
+- NeoForge 26.3.0.48-beta or newer
+
+## Usage
+
+Create a **new world**. Existing worlds keep their old generated chunks.
+
+Dug-out range is generated as you move; nothing is pre-generated far below spawn.
+
+## Run
+
+```bash
+./gradlew runClient
+```
+
+## Build
+
+```bash
+./gradlew build
+```
+
+Jar: `build/libs/infiniteheight-1.0.0.jar`.
+
+## How it works
+
+| Area | Change |
+| --- | --- |
+| `BlockPos` | `@ModifyConstant` on the horizontal packing bound, widening Y from 12 to 20 bits |
+| `ChunkAccess` | sparse `Int2ObjectMap<LevelChunkSection>` keyed by section Y, synced with the native section array |
+| `NoiseBasedChunkGenerator` | generates the vanilla column plus one deep tile at load, then more tiles on demand |
+| `WorldGenerationContext` | clamps the generation range to the active tile so carvers and the material rule work below `-64` |
+| `Aquifer.NoiseBasedAquifer` | shifts carver Y back into the sampled tile so the aquifer cache stays in range |
+| `RotatingSectionStorage` | slides the render window vertically instead of covering the whole column |
+| `SerializableChunkData` | section Y written as an int instead of a byte |
+
+### Mixin notes
+
+- Do not `@Shadow` `ChunkAccess` fields/methods inherited from `LevelChunk`, and do not
+  `@Shadow` interface defaults such as `LevelHeightAccessor.getSectionYFromSectionIndex`.
+- Do not `@Redirect` record accessors such as `SerializableChunkData.SectionData.y()`.
+- `@Inject` at `HEAD` of a constructor must be `static`.
+- Vanilla post-processing is a fixed `ShortList[]`; extra tiles overflow it unless the
+  index is bounds-checked.
